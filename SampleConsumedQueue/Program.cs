@@ -8,7 +8,7 @@ namespace SampleConsumedQueue
     class Program
     {
         private static void Main(string[] args)
-        {
+        {           
             // First demo : Dequeue soon as possible.
 
             Console.WriteLine("");

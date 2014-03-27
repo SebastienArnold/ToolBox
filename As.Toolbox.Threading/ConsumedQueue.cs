@@ -1,14 +1,15 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 
 namespace As.Toolbox.Threading
 {
     /// <summary>
-    /// ConsumedQueue is a queue automatically unstacked by an adjustable amount of thread worker.
+    /// ConsumedQueueOptimizedMono is a queue automatically unstacked by a thread worker.
     /// The action to do when enqueue is provided in constructor.
     /// 
-    /// Initialize: var consumedQueue = new ConsumedQueue«string»(3,s => Console.WriteLine(s));
+    /// Initialize: var consumedQueue = new ConsumedQueue«string»(s => Console.WriteLine(s));
     /// Enqueue: consumedQueue.EnqueueItem("toto");
     /// Pause \ Resume: consumedQueue.Pause(); consumedQueue.Resume();
     /// 
@@ -18,13 +19,14 @@ namespace As.Toolbox.Threading
     {
         #region _Private properties_
 
+        readonly ManualResetEvent _manualResetEvent = new ManualResetEvent(true); 
+
         private bool _exitRequested;
         private bool _pauseRequested;
-
-        private readonly object _locker = new object();
+        
         private readonly List<Thread> _consumerThreadsPool;
 
-        private readonly Queue<T> _itemsQueue = new Queue<T>();
+        private readonly ConcurrentQueue<T> _itemsQueue = new ConcurrentQueue<T>();
         private readonly Action<T> _dequeueAction;
 
         #endregion _Private properties_
@@ -34,17 +36,16 @@ namespace As.Toolbox.Threading
         /// <summary>
         /// Initializes a new instance of the <see cref="ConsumedQueue{T}"/> class.
         /// </summary>
-        /// <param name="workerCount">The amount of Thread worker to create in thread pool to dequeue items.</param>
+        /// <param name="workerCount"></param>
         /// <param name="dequeueAction">The action to execute when dequeue an item.</param>
         public ConsumedQueue(int workerCount, Action<T> dequeueAction)
         {
             _dequeueAction = dequeueAction;
+
             _consumerThreadsPool = new List<Thread>(workerCount);
-            
-            // Initialize thread worker pool.
-            for (int i=0; i<workerCount; i++)
+            for (var i = 0; i < workerCount; i++)
             {
-                var t = new Thread(Consume) { IsBackground = true, Name = string.Format("Worker {0}", i )};
+                var t = new Thread(Consume) { IsBackground = true, Name = string.Format("Worker {0}", i) };
                 _consumerThreadsPool.Add(t);
                 t.Start();
             }
@@ -56,11 +57,8 @@ namespace As.Toolbox.Threading
         /// <param name="item"></param>
         public void EnqueueItem(T item)
         {
-            lock (_locker)
-            {
-                _itemsQueue.Enqueue(item);
-                Monitor.PulseAll(_locker);
-            }
+            _itemsQueue.Enqueue(item);
+            if(!_pauseRequested) _manualResetEvent.Set();
         }
 
         /// <summary>
@@ -68,11 +66,9 @@ namespace As.Toolbox.Threading
         /// </summary>
         public void Dispose()
         {
-            // Set exit requested to indicate thread have to exit.
             _exitRequested = true;
-            // Send signal to wake up thread if waiting.
-            Monitor.PulseAll(_locker);
-            // Join thread.
+            _manualResetEvent.Set();
+
             _consumerThreadsPool.ForEach(thread => thread.Join());
         }
 
@@ -82,6 +78,7 @@ namespace As.Toolbox.Threading
         public void Pause()
         {
             _pauseRequested = true;
+            _manualResetEvent.Reset();
         }
 
         /// <summary>
@@ -89,11 +86,8 @@ namespace As.Toolbox.Threading
         /// </summary>
         public void Resume()
         {
-            lock (_locker)
-            {
-                _pauseRequested = false;
-                if (_itemsQueue.Count > 0) Monitor.PulseAll(_locker);
-            }
+            _pauseRequested = false;
+            _manualResetEvent.Set();
         }
 
         /// <summary>
@@ -116,18 +110,11 @@ namespace As.Toolbox.Threading
         {
             while (true)
             {
+                if (_itemsQueue.Count == 0 || _pauseRequested) _manualResetEvent.WaitOne();
+                if (_exitRequested) return;
+
                 T item;
-                lock (_locker)
-                {
-                    // Unlock _locker but wait for signal.
-                    while (_itemsQueue.Count == 0 || _pauseRequested) Monitor.Wait(_locker);
-                    if (_exitRequested) return;
-
-                    item = _itemsQueue.Dequeue();
-                }
-
-                // run dequeue method.
-                _dequeueAction(item);
+                if (_itemsQueue.TryDequeue(out item)) _dequeueAction(item);
             }
         }
     }
