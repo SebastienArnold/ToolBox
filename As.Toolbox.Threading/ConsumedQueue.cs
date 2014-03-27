@@ -89,8 +89,11 @@ namespace As.Toolbox.Threading
         /// </summary>
         public void Resume()
         {
-            _pauseRequested = false;
-            if (_itemsQueue.Count == 0) Monitor.Wait(_locker);
+            lock (_locker)
+            {
+                _pauseRequested = false;
+                if (_itemsQueue.Count > 0) Monitor.PulseAll(_locker);
+            }
         }
 
         /// <summary>
