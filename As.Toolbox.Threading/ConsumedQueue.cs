@@ -110,7 +110,9 @@ namespace As.Toolbox.Threading
         {
             while (true)
             {
-                if (_itemsQueue.Count == 0 || _pauseRequested) _manualResetEvent.WaitOne();
+                if (_itemsQueue.Count == 0 || _pauseRequested) _manualResetEvent.Reset();
+                _manualResetEvent.WaitOne();
+
                 if (_exitRequested) return;
 
                 T item;
